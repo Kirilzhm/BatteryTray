@@ -50,8 +50,14 @@ namespace BatteryTray
         const int WM_MOUSEMOVE = 0x200, WM_LBUTTONUP = 0x202, WM_RBUTTONUP = 0x205, WM_MOUSELEAVE = 0x2A3, WM_MOUSEACTIVATE = 0x21;
         const uint SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0x10, SWP_SHOWWINDOW = 0x40;
 
+        // За замовчуванням віджет — дочірнє вікно панелі задач: живе в її шарі, тож його видно
+        // і при відкритому "Пуск" (Win). Старий режим окремого вікна: BATTERYTRAY_MODE=popup.
+        public static readonly bool ChildMode = Environment.GetEnvironmentVariable("BATTERYTRAY_MODE") != "popup";
         public static string DumpPath = Environment.GetEnvironmentVariable("BATTERYTRAY_DUMP");
         public List<BatteryDevice> Devices = new List<BatteryDevice>();
+        // Після першого сканування: якщо пристроїв немає — показуємо "—", щоб було видно, що програма працює.
+        public bool ShowPlaceholder;
+        bool HasContent { get { return Devices.Count > 0 || ShowPlaceholder; } }
         public ContextMenuStrip Menu;
         public Action LeftClick = delegate { };
 
@@ -69,8 +75,10 @@ namespace BatteryTray
             _watch.Tick += delegate { EnsureAttached(); };
             _watch.Start();
             EnsureAttached();
+            if (!ChildMode) {
             var t = new Thread(FollowLoop) { IsBackground = true, Name = "TaskbarFollow", Priority = ThreadPriority.AboveNormal };
             t.Start();
+            }
         }
 
         // Окремий потік, синхронізований з кадрами екрана (DwmFlush). Він показує/ховає віджет і веде
@@ -149,13 +157,21 @@ namespace BatteryTray
                 if (Handle != IntPtr.Zero) DestroyHandle();
                 _taskbar = Native.FindWindowW("Shell_TrayWnd", null);
                 if (_taskbar == IntPtr.Zero) return;
-                var cp = new CreateParams
-                {
-                    Caption = "BatteryTrayWidget",
-                    Style = WS_POPUP,
-                    ExStyle = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | 0x8 /*TOPMOST*/,
-                    X = 0, Y = 0, Width = 1, Height = 1
-                };
+                var cp = ChildMode
+                    ? new CreateParams // дочірнє вікно панелі: живе в її шарі (видно і з відкритим "Пуск")
+                    {
+                        Caption = "BatteryTrayWidget",
+                        Style = 0x40000000 /*CHILD*/ | 0x04000000 /*CLIPSIBLINGS*/,
+                        ExStyle = WS_EX_LAYERED | WS_EX_NOACTIVATE,
+                        Parent = _taskbar, X = 0, Y = 0, Width = 1, Height = 1
+                    }
+                    : new CreateParams
+                    {
+                        Caption = "BatteryTrayWidget",
+                        Style = WS_POPUP,
+                        ExStyle = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | 0x8 /*TOPMOST*/,
+                        X = 0, Y = 0, Width = 1, Height = 1
+                    };
                 CreateHandle(cp);
                 _lastTray = new Native.RECT();
                 Render();
@@ -176,11 +192,25 @@ namespace BatteryTray
         void Place(Native.RECT tray, Native.RECT bar)
         {
             _lastTray = tray; _lastBar = bar;
+            if (ChildMode)
+            {
+                // Координати відносно панелі; рухається й ховається разом із нею сам.
+                int cx = tray.Left - bar.Left - _w - (int)(2 * (_h / 48f));
+                bool want = HasContent;
+                bool top = Native.GetWindow(_taskbar, 5 /*GW_CHILD*/) == Handle;
+                if (!want) { if (_posX != int.MinValue) { Native.ShowWindow(Handle, 0); _posX = int.MinValue; _tip.Hide(); } return; }
+                if (cx != _posX || !top)
+                {
+                    Native.SetWindowPos(Handle, IntPtr.Zero /*HWND_TOP*/, cx, 0, _w, _h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                    _posX = cx;
+                }
+                return;
+            }
             var screen = Screen.FromHandle(_taskbar).Bounds;
             int x = tray.Left - _w - (int)(2 * (_h / 48f));
             _screenTop = screen.Top; _screenBottom = screen.Bottom;
             _hwnd = Handle; _bar = _taskbar; _followX = x;
-            _enabled = Devices.Count > 0;
+            _enabled = HasContent;
             if (!_visibleNow) { _tip.Hide(); _posX = int.MinValue; return; }
             if (x != _posX || IsAbove(_taskbar, Handle))
             {
@@ -229,7 +259,7 @@ namespace BatteryTray
                 case DeviceKind.Mouse: return 11 * s;
                 case DeviceKind.Keyboard: return 19 * s;
                 case DeviceKind.Headphones: return 16 * s;
-                default: return 12 * s;
+                default: return 19 * s;
             }
         }
 
@@ -286,8 +316,13 @@ namespace BatteryTray
                         break;
                     }
                     default:
-                        g.DrawEllipse(pen, x + lw / 2, cy - 5 * s, 10 * s, 10 * s);
+                    {
+                        // Батарейка: корпус + "плюсик" справа.
+                        float w = 16 * s, h = 9 * s, top = cy - h / 2, left = x + lw / 2;
+                        using (var p = RoundRect(left, top, w, h, 2 * s)) g.DrawPath(pen, p);
+                        using (var p = RoundRect(left + w + 0.6f * s, cy - 2.2f * s, 1.8f * s, 4.4f * s, 0.8f * s)) g.FillPath(br, p);
                         break;
+                    }
                 }
             }
         }
@@ -308,7 +343,9 @@ namespace BatteryTray
             if (!TrayRect(out tray) || !Native.GetWindowRect(_taskbar, out bar)) return;
             _lastTray = tray; _lastBar = bar;
 
-            if (Devices.Count == 0) { Place(tray, bar); return; }
+            if (!HasContent) { Place(tray, bar); return; }
+            bool placeholder = Devices.Count == 0;
+            var shown = placeholder ? new List<BatteryDevice> { new BatteryDevice { Kind = DeviceKind.Other, Percent = -1 } } : Devices;
 
             _h = bar.Bottom - bar.Top;
             float scale = _h / 48f;
@@ -320,13 +357,14 @@ namespace BatteryTray
             {
                 var fmt = StringFormat.GenericTypographic;
                 float pad = 8 * scale, gapIcon = 6 * scale, gapItem = 16 * scale;
-                var items = Devices.Select(d => new
+                var items = shown.Select(d => new
                 {
                     Dev = d,
-                    Text = d.Percent + "%",
+                    Text = d.Percent < 0 ? "—" : d.Percent + "%",
                     GW = GlyphWidth(d.Kind, scale) + 1.6f * scale,
-                    TW = mg.MeasureString(d.Percent + "%", textFont, 1000, fmt).Width
+                    TW = mg.MeasureString(d.Percent < 0 ? "—" : d.Percent + "%", textFont, 1000, fmt).Width
                 }).ToList();
+                if (placeholder) fg = Color.FromArgb(150, fg); // приглушено
                 float total = pad * 2 + items.Sum(i => i.GW + gapIcon + i.TW) + gapItem * (items.Count - 1);
                 _w = (int)Math.Ceiling(total);
 
@@ -383,6 +421,8 @@ namespace BatteryTray
 
         string TooltipText()
         {
+            if (Devices.Count == 0)
+                return "BatteryTray: підтримуваних пристроїв не знайдено.\nПравий клік → «Звіт про пристрої»";
             return string.Join("\n", Devices.Select(d => d.Name + ": " + d.Percent + "%" + (d.Charging ? " ⚡ заряджається" : "")));
         }
 
@@ -508,6 +548,7 @@ namespace BatteryTray
             var auto = new ToolStripMenuItem("Запускати з Windows") { Checked = IsAutostart() };
             auto.Click += delegate { SetAutostart(!IsAutostart()); auto.Checked = IsAutostart(); };
             menu.Items.Add(auto);
+            menu.Items.Add("Звіт про пристрої", null, delegate { SaveReport(); });
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Вийти", null, delegate { ExitThread(); });
             return menu;
@@ -542,6 +583,7 @@ namespace BatteryTray
             foreach (var k in _known.Keys.Where(k => DateTime.Now - _lastSeen[k] > TimeSpan.FromMinutes(10)).ToList())
                 _known.Remove(k);
 
+            _widget.ShowPlaceholder = true; // перше сканування завершене
             _widget.Devices = _known.Values
                 .OrderBy(d => d.Kind == DeviceKind.Mouse ? 0 : d.Kind == DeviceKind.Keyboard ? 1 : d.Kind == DeviceKind.Headphones ? 2 : 3)
                 .ThenBy(d => d.Name).ToList();
@@ -556,6 +598,50 @@ namespace BatteryTray
                 }
                 else if (d.Percent > LowThreshold + 5 || d.Charging) _warned.Remove(d.Container);
             }
+        }
+
+        // Зберігає на робочий стіл текстовий звіт про всі HID-пристрої та результат сканування,
+        // щоб людина з непідтримуваним пристроєм могла надіслати його розробнику.
+        void SaveReport()
+        {
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine("BatteryTray — звіт про пристрої");
+                sb.AppendLine("Дата: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
+                sb.AppendLine("Windows: " + Environment.OSVersion.VersionString + (Environment.Is64BitOperatingSystem ? " x64" : " x86"));
+                sb.AppendLine();
+                sb.AppendLine("=== Знайдені пристрої із зарядом ===");
+                Action<string> log = line => { lock (sb) sb.AppendLine("  [log] " + line); };
+                var oldL = Logitech.Log; var oldA = AttackShark.Log;
+                Logitech.Log = log; AttackShark.Log = log;
+                List<BatteryDevice> found;
+                try { found = ScanAll(); } finally { Logitech.Log = oldL; AttackShark.Log = oldA; }
+                if (found.Count == 0) sb.AppendLine("  (жодного)");
+                foreach (var d in found)
+                    sb.AppendLine("  " + d.Kind + " | " + d.Percent + "% | " + d.Name + (d.Charging ? " (заряджається)" : ""));
+                sb.AppendLine();
+                sb.AppendLine("=== Усі HID-інтерфейси (VID:PID, usage page/usage, назва) ===");
+                try
+                {
+                    foreach (var h in Hid.Enumerate(v => true).OrderBy(h => h.Vid).ThenBy(h => h.Pid).ThenBy(h => h.UsagePage))
+                        sb.AppendLine(string.Format("  {0:X4}:{1:X4}  page={2:X4} usage={3:X4} in={4} out={5} feat={6}  {7}",
+                            h.Vid, h.Pid, h.UsagePage, h.Usage, h.InputLen, h.OutputLen, h.FeatureLen, h.Product));
+                }
+                catch (Exception e) { sb.AppendLine("  помилка: " + e.Message); }
+
+                string path = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "BatteryTray-report.txt");
+                try
+                {
+                    System.IO.File.WriteAllText(path, sb.ToString(), System.Text.Encoding.UTF8);
+                    System.Diagnostics.Process.Start("notepad.exe", "\"" + path + "\"");
+                }
+                catch (Exception e)
+                {
+                    string msg = e.Message;
+                    _invoker.BeginInvoke((Action)delegate { MessageBox.Show("Не вдалося зберегти звіт: " + msg, "BatteryTray"); });
+                }
+            });
         }
 
         void Warn(string text)

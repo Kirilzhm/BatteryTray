@@ -112,6 +112,16 @@ namespace BatteryTray
             if (h.IsInvalid) { h.Dispose(); return null; }
             return new HidConnection(h, i);
         }
+
+        // Для пасивного прослуховування: якщо запис заборонено, відкриваємо лише на читання.
+        public static HidConnection OpenRead(HidInterface i)
+        {
+            var c = Open(i);
+            if (c != null) return c;
+            var h = CreateFileW(i.Path, GENERIC_READ, SHARE_RW, IntPtr.Zero, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, IntPtr.Zero);
+            if (h.IsInvalid) { h.Dispose(); return null; }
+            return new HidConnection(h, i, FileAccess.Read);
+        }
     }
 
     class HidConnection : IDisposable
@@ -124,10 +134,12 @@ namespace BatteryTray
         IAsyncResult _pending;
         byte[] _pendingBuf;
 
-        public HidConnection(SafeFileHandle h, HidInterface info)
+        public HidConnection(SafeFileHandle h, HidInterface info) : this(h, info, FileAccess.ReadWrite) { }
+
+        public HidConnection(SafeFileHandle h, HidInterface info, FileAccess access)
         {
             Handle = h; Info = info;
-            _fs = new FileStream(h, FileAccess.ReadWrite, 1, true);
+            _fs = new FileStream(h, access, 1, true);
         }
 
         public bool Write(byte[] report)

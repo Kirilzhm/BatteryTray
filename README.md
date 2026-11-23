@@ -51,7 +51,7 @@
 |---|---|
 | Навести курсор | Підказка з повними назвами пристроїв і зарядом |
 | Лівий клік | Оновити заряд зараз |
-| Правий клік | Меню: **Оновити** · **Запускати з Windows** · **Вийти** |
+| Правий клік | Меню: **Оновити** · **Запускати з Windows** · **Звіт про пристрої** · **Вийти** |
 
 Закрити програму можна лише через правий клік по віджету → **Вийти**.
 
@@ -65,11 +65,28 @@ Windows не має єдиного способу дізнатися заряд 
 |---|---|---|
 | **Logitech** мишки та клавіатури (G Pro, Superlight, MX…) | Ресивер LIGHTSPEED / Unifying / Bolt (протокол HID++ 2.0) | ✅ |
 | **Logitech PRO X 2 LIGHTSPEED** (навушники) | Власний ресивер | ✅ |
-| **Attack Shark** та інші клавіатури на чипах YiChip (VID `3151`) | 2.4G ресивер | ✅ (без індикатора заряджання) |
+| **Attack Shark** клавіатури на YiChip — 2.4G Wireless, K86, X65HE, K75, K85, X85 Pro… (VID `3151`) | 2.4G ресивер | ✅ (без індикатора заряджання) |
+| **Attack Shark** мишки на Beken — X11, X6, R1, X8 SE, X8 Plus, X3… (VID `1D57`) | 2.4G ресивер | 🧪 мишка сама надсилає заряд раз на кілька хвилин — після запуску значення з'явиться не одразу |
+| **Attack Shark X87** | 2.4G ресивер (`3554:FA09`) | 🧪 |
+| **Attack Shark R11 Ultra / X11 Ultra** | 2.4G ресивер (VID `3554`) | 🧪 |
+| **Attack Shark R5 Ultra** | 2.4G ресивер / кабель (`373E:0047` / `0046`) | 🧪 |
+| **Attack Shark X98** | 2.4G ресивер / кабель (`1A2C:8FFF` / `A034`) | 🧪 |
+| **Навушники Attack Shark** (L60, L80, L80 Pro, G800) | Bluetooth | ✅ через Bluetooth (Windows сама повідомляє заряд) |
+| **Навушники Attack Shark** | 2.4G ресивер | ❌ протокол ще ніхто не розібрав — допоможіть [звітом](#бачите-лише--) |
 | Будь-які **Bluetooth**-пристрої, що повідомляють заряд Windows | Bluetooth | ✅ |
 | Razer, SteelSeries, HyperX, Corsair… | — | ❌ поки ні |
 
+🧪 — реалізовано за задокументованими протоколами спільноти, але ще не перевірено на реальному пристрої. Якщо у вас така модель — напишіть, чи працює (і додайте [звіт](#бачите-лише--)).
+
 Якщо пристрій вимкнений або заснув, віджет ще 10 хвилин показує останнє відоме значення, а потім прибирає його.
+
+### Бачите лише 🔋 «—»?
+
+Це означає, що програма працює, але не знайшла жодного підтримуваного пристрою — найчастіше це девайс іншого бренду.
+
+1. Клацніть **правою кнопкою** по віджету → **Звіт про пристрої**.
+2. На робочому столі з'явиться файл `BatteryTray-report.txt` (він одразу відкриється в Блокноті).
+3. Створіть [Issue](../../issues/new) і прикріпіть цей файл — у ньому лише список USB/Bluetooth-пристроїв (виробник, модель), без особистих даних. По ньому можна додати підтримку вашого пристрою.
 
 ---
 
@@ -78,8 +95,8 @@ Windows не має єдиного способу дізнатися заряд 
 Нічого встановлювати не потрібно — компілятор C# уже вбудований у Windows (.NET Framework 4).
 
 ```powershell
-git clone https://github.com/<логін>/<репозиторій>.git
-cd <репозиторій>
+git clone https://github.com/Kirilzhm/BatteryTray.git
+cd BatteryTray
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
@@ -91,7 +108,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 |---|---|
 | `Widget.cs` | Віджет на панелі задач, малювання значків, меню, автозапуск |
 | `Logitech.cs` | Протокол HID++ (мишки/клави) і протокол навушників PRO X 2 |
-| `AttackShark.cs` | Запит статусу ресивера YiChip (лише читання) |
+| `AttackShark.cs` | Attack Shark: статус ресивера YiChip, прослуховування мишок Beken, X87 (лише читання) |
 | `Hid.cs` | Низькорівневий доступ до USB HID |
 | `BatteryTray.cs` | Bluetooth-пристрої через Windows API |
 | `app.manifest` | DPI-awareness і сумісність з Windows 10/11 |
@@ -133,5 +150,10 @@ BatteryTray.exe --hid    # перелічити всі HID-інтерфейси
 ## 🙏 Подяки
 
 - [sharkfin](https://github.com/dniminenn/sharkfin) — документація протоколу клавіатур YiChip
+- [attack-shark-linux](https://github.com/blak0p/attack-shark-linux), [attack-shark-r1](https://github.com/jlucaso1/attack-shark-r1), [attack-shark-x11-linux](https://github.com/iago-fragnan/attack-shark-x11-linux), [attackshark-bridge](https://github.com/viix0dev/attackshark-bridge), [attack-shark-ctl](https://github.com/cyberps96/attack-shark-ctl) — протокол мишок Attack Shark
+- [attack_shark_x87_web](https://github.com/thedtvn/attack_shark_x87_web) — протокол Attack Shark X87
+- [attack-shark-r11_ultra-linux](https://github.com/damien1141/attack-shark-r11_ultra-linux), [attackshark-linux-driver](https://github.com/imAmachine/attackshark-linux-driver) — протокол R11 / X11 Ultra
+- [attackshark-battery-bridge](https://github.com/maxboeer/attackshark-battery-bridge) — протокол R5 Ultra
+- [Wireless-Device-Battery-Monitor](https://github.com/ceeprus/Wireless-Device-Battery-Monitor) — протокол X98
 - [Патч для ядра Linux](https://lwn.net/Articles/1093805/) — протокол заряду Logitech PRO X 2 LIGHTSPEED
 - [Solaar](https://github.com/pwr-Solaar/Solaar) — довідка щодо Logitech HID++
